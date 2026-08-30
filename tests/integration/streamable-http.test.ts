@@ -123,7 +123,12 @@ describe("streamable HTTP integration", () => {
 
     expect(toolsResponse.status).toBe(200);
     const toolsBody = parseJsonRpcResponse(await toolsResponse.text()) as {
-      result: { tools: Array<{ name: string }> };
+      result: {
+        tools: Array<{
+          name: string;
+          inputSchema: { properties?: Record<string, unknown> };
+        }>;
+      };
     };
     const toolNames = toolsBody.result.tools.map((tool) => tool.name);
     expect(toolNames).toEqual([
@@ -135,6 +140,20 @@ describe("streamable HTTP integration", () => {
       "delete_memory",
       "list_entities",
     ]);
+
+    for (const name of [
+      "add_memory",
+      "search_memories",
+      "get_memories",
+      "list_entities",
+    ]) {
+      const tool = toolsBody.result.tools.find((candidate) => candidate.name === name);
+      expect(tool?.inputSchema.properties).toHaveProperty("user_id");
+    }
+    for (const name of ["get_memory", "update_memory", "delete_memory"]) {
+      const tool = toolsBody.result.tools.find((candidate) => candidate.name === name);
+      expect(tool?.inputSchema.properties).not.toHaveProperty("user_id");
+    }
   });
 
   it("exposes health endpoint", async () => {

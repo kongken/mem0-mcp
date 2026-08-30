@@ -5,7 +5,7 @@ import { getRequestApiKey } from "../context.js";
 import { jsonResponse, toToolError } from "../errors.js";
 import {
   filterEntitiesForUser,
-  rejectIdentityOverride,
+  rejectUnsupportedIdentityOverride,
   sanitizeSearchFilters,
   scopedUserId,
 } from "../identity.js";
@@ -17,24 +17,36 @@ const messageSchema = z.object({
 });
 
 const metadataSchema = z.record(z.unknown()).optional();
+const userIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .optional()
+  .describe("User scope. Defaults to the server-configured user_id.");
 
 const MAX_TOP_K = 1000;
 
-type ToolHandler<TArgs extends Record<string, unknown>> = (
+type ScopedToolArgs = Record<string, unknown> & { user_id?: string };
+
+type ToolHandler<TArgs extends ScopedToolArgs> = (
   apiKey: string,
   args: TArgs,
   scope: { user_id: string },
 ) => Promise<unknown>;
 
-function withScopedTool<TArgs extends Record<string, unknown>>(
+function withScopedTool<TArgs extends ScopedToolArgs>(
   config: AppConfig,
   handler: ToolHandler<TArgs>,
 ) {
   return async (args: TArgs) => {
     try {
       const apiKey = getRequestApiKey();
-      rejectIdentityOverride(args);
-      const result = await handler(apiKey, args, scopedUserId(config));
+      rejectUnsupportedIdentityOverride(args);
+      const result = await handler(
+        apiKey,
+        args,
+        scopedUserId(config, args.user_id),
+      );
       return jsonResponse(result);
     } catch (error) {
       return toToolError(error);
@@ -48,7 +60,7 @@ function withAuthenticatedTool<TArgs extends Record<string, unknown>>(
   return async (args: TArgs) => {
     try {
       const apiKey = getRequestApiKey();
-      rejectIdentityOverride(args);
+      rejectUnsupportedIdentityOverride(args);
       const result = await handler(apiKey, args);
       return jsonResponse(result);
     } catch (error) {
@@ -67,12 +79,13 @@ export function registerMem0Tools(
     {
       title: "Add memory",
       description:
-        "Store conversation messages as memories for the configured user identity.",
+        "Store conversation messages as memories for a user identity.",
       inputSchema: {
         messages: z
           .array(messageSchema)
           .min(1)
           .describe("Messages to store as memory input."),
+        user_id: userIdSchema,
         metadata: metadataSchema.describe("Optional metadata to attach."),
         infer: z
           .boolean()
@@ -94,9 +107,10 @@ export function registerMem0Tools(
     "search_memories",
     {
       title: "Search memories",
-      description: "Semantic search across memories for the configured user.",
+      description: "Semantic search across memories for a user.",
       inputSchema: {
         query: z.string().min(1).describe("Natural language search query."),
+        user_id: userIdSchema,
         top_k: z
           .number()
           .int()
@@ -105,7 +119,7 @@ export function registerMem0Tools(
           .optional()
           .describe("Maximum number of results (maps to Mem0 top_k)."),
         filters: metadataSchema.describe(
-          "Optional Mem0 search filters. Identity keys are not allowed.",
+          "Optional Mem0 search filters. Identity keys must use the top-level user_id argument.",
         ),
       },
     },
@@ -124,8 +138,9 @@ export function registerMem0Tools(
     {
       title: "Get memories",
       description:
-        "List memories for the configured user. Mem0 OSS supports top_k only (no pagination).",
+        "List memories for a user. Mem0 OSS supports top_k only (no pagination).",
       inputSchema: {
+        user_id: userIdSchema,
         top_k: z
           .number()
           .int()
@@ -203,13 +218,14 @@ export function registerMem0Tools(
     "list_entities",
     {
       title: "List entities",
-      description:
-        "List the configured user entity known to Mem0 with memory counts.",
-      inputSchema: {},
+      description: "List a user entity known to Mem0 with memory counts.",
+      inputSchema: {
+        user_id: userIdSchema,
+      },
     },
-    withAuthenticatedTool(async (apiKey) => {
+    withScopedTool(config, async (apiKey, _args, scope) => {
       const entities = await client.listEntities(apiKey);
-      return filterEntitiesForUser(entities, config.defaultUserId);
+      return filterEntitiesForUser(entities, scope.user_id);
     }),
   );
 }

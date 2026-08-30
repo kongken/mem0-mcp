@@ -75,7 +75,7 @@ More: [Mem0 server README](https://github.com/mem0ai/mem0/tree/main/server), [RE
 
 ## 2. Deploy mem0-mcp
 
-Point mem0-mcp at your running Mem0 OSS instance and pick the `user_id` scope for this adapter.
+Point mem0-mcp at your running Mem0 OSS instance and choose the fallback `user_id`. Memory tools may override it explicitly per call.
 
 ### Option A — Docker (recommended)
 
@@ -213,7 +213,7 @@ Confirm the memory also appears in the Mem0 dashboard at `http://localhost:3000`
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `MEM0_API_URL` | yes | — | Self-hosted Mem0 REST base URL, e.g. `http://localhost:8888` |
-| `MEM0_DEFAULT_USER_ID` | yes | — | `user_id` injected into every memory tool call (must match Mem0 scope) |
+| `MEM0_DEFAULT_USER_ID` | yes | — | Fallback `user_id` used when a tool call omits `user_id` |
 | `HOST` | no | `0.0.0.0` | HTTP bind address |
 | `PORT` | no | `8080` | HTTP port |
 | `MCP_HTTP_PATH` | no | `/mcp` | MCP HTTP path |
@@ -228,34 +228,37 @@ Confirm the memory also appears in the Mem0 dashboard at `http://localhost:3000`
 
 ## MCP tools
 
-| Tool | Mem0 OSS endpoint |
-| --- | --- |
-| `add_memory` | `POST /memories` |
-| `search_memories` | `POST /search` |
-| `get_memories` | `GET /memories?user_id=…&top_k=…` |
-| `get_memory` | `GET /memories/{id}` |
-| `update_memory` | `PUT /memories/{id}` |
-| `delete_memory` | `DELETE /memories/{id}` |
-| `list_entities` | `GET /entities` (filtered to configured user) |
+| Tool | Mem0 OSS endpoint | Scope input |
+| --- | --- | --- |
+| `add_memory` | `POST /memories` | optional `user_id` |
+| `search_memories` | `POST /search` | optional `user_id`; metadata filters |
+| `get_memories` | `GET /memories?user_id=…&top_k=…` | optional `user_id` |
+| `get_memory` | `GET /memories/{id}` | exact memory ID |
+| `update_memory` | `PUT /memories/{id}` | exact memory ID |
+| `delete_memory` | `DELETE /memories/{id}` | exact memory ID |
+| `list_entities` | `GET /entities` | optional `user_id`; result filtered to that user |
 
 ---
 
 ## Security
 
 - Missing `X-API-Key` on MCP requests → `401` before Mem0 is contacted
-- `user_id` / `agent_id` / `run_id` cannot be set in tool args or search `filters`; adapter injects `MEM0_DEFAULT_USER_ID`
+- `add_memory`, `search_memories`, `get_memories`, and `list_entities` accept an optional top-level `user_id`; otherwise the adapter uses `MEM0_DEFAULT_USER_ID`
+- Identity keys are rejected anywhere inside search `filters`; pass `user_id` through the dedicated top-level argument
+- `agent_id` and `run_id` are not supported by this adapter
+- A Mem0 OSS API key authenticates the caller but does not authorize a specific memory `user_id`; any trusted client with a valid key can select another `user_id`
 - No bulk delete, entity cascade delete, configure, or reset in v1
 - API keys and memory bodies are redacted from logs
 - Keep Mem0 OSS auth enabled; do not use `AUTH_DISABLED=true` in production
-- One mem0-mcp instance → one `MEM0_DEFAULT_USER_ID`; run separate instances per user if needed
 
 ## Production checklist
 
 1. **TLS** — terminate HTTPS at nginx/Caddy/Traefik in front of mem0-mcp (and Mem0 dashboard if exposed).
 2. **Network** — Mem0 Postgres and API on a private network; only expose mem0-mcp (and dashboard if needed).
-3. **Keys** — use per-user `m0sk_...` keys from the Mem0 dashboard; rotate by updating client headers.
-4. **Host allowlist** — set `MCP_ALLOWED_HOSTS` when binding `0.0.0.0`.
-5. **Identity** — set `MEM0_DEFAULT_USER_ID` to the same `user_id` you use when calling Mem0 directly.
+3. **Keys** — use separate `m0sk_...` keys per client and rotate by updating client headers; do not treat a key as bound to a memory `user_id`.
+4. **Access** — expose the endpoint only to clients trusted to choose any `user_id`, or add an authorization proxy that maps credentials to allowed identities.
+5. **Host allowlist** — set `MCP_ALLOWED_HOSTS` when binding `0.0.0.0`.
+6. **Identity** — set `MEM0_DEFAULT_USER_ID` to the normal fallback scope used when callers omit `user_id`.
 
 Example nginx for mem0-mcp:
 
@@ -278,6 +281,7 @@ location /mcp {
 | Backend | Mem0 Platform | Your Mem0 OSS |
 | Data | Mem0 Cloud | Your Postgres |
 | Auth | OAuth / platform key | `X-API-Key` → your Mem0 |
+| User scope | Tool-selected user/agent filters | Optional tool `user_id`, then server default |
 | Setup | `npx mcp-add` | Deploy Mem0 OSS + this adapter |
 
 ## Development

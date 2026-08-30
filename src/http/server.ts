@@ -199,11 +199,11 @@ function createMcpServer(client: Mem0Client, config: AppConfig): McpServer {
   const server = new McpServer(
     {
       name: "mem0-mcp",
-      version: "0.1.0",
+      version: "0.2.0",
     },
     {
       instructions:
-        "Self-hosted Mem0 OSS MCP adapter. Authentication uses the HTTP X-API-Key header; memory scope is limited to the server-configured user identity.",
+        "Self-hosted Mem0 OSS MCP adapter. Authentication uses the HTTP X-API-Key header. Memory tools accept an optional user_id and otherwise use the server-configured default.",
     },
   );
 

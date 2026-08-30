@@ -143,10 +143,23 @@ function routeMockRequest(
   }
 
   if (method === "GET" && url.pathname === "/entities") {
-    json(res, 200, [
-      { id: "alice", type: "user", total_memories: state.memories.size },
-      { id: "bob", type: "user", total_memories: 0 },
-    ]);
+    const userIds = new Set(["alice", "bob"]);
+    for (const memory of state.memories.values()) {
+      if (typeof memory.user_id === "string") {
+        userIds.add(memory.user_id);
+      }
+    }
+    json(
+      res,
+      200,
+      [...userIds].map((userId) => ({
+        id: userId,
+        type: "user",
+        total_memories: [...state.memories.values()].filter(
+          (memory) => memory.user_id === userId,
+        ).length,
+      })),
+    );
     return;
   }
 

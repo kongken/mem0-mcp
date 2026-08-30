@@ -130,16 +130,50 @@ describe("tool calls against mock Mem0", () => {
     expect(deleteResult.data.summary).toContain(memoryId);
   });
 
-  it("rejects identity override via search filters", async () => {
+  it("uses an explicit user_id instead of the configured default", async () => {
+    await startServers();
+
+    const addResult = await callTool("add_memory", {
+      messages: [{ role: "user", content: "Bob prefers Go" }],
+      user_id: "bob",
+    });
+    expect(addResult.isError).toBe(false);
+
+    const defaultSearch = await callTool("search_memories", {
+      query: "Go",
+    });
+    expect(defaultSearch.data.results).toHaveLength(0);
+
+    const bobSearch = await callTool("search_memories", {
+      query: "Go",
+      user_id: "bob",
+    });
+    expect(bobSearch.isError).toBe(false);
+    expect(bobSearch.data.results).toHaveLength(1);
+    expect(bobSearch.data.results[0].user_id).toBe("bob");
+
+    const bobMemories = await callTool("get_memories", {
+      user_id: "bob",
+    });
+    expect(bobMemories.isError).toBe(false);
+    expect(bobMemories.data.results).toHaveLength(1);
+
+    const bobEntity = await callTool("list_entities", { user_id: "bob" });
+    expect(bobEntity.data).toEqual([
+      { id: "bob", type: "user", total_memories: 1 },
+    ]);
+  });
+
+  it("rejects identity override anywhere inside search filters", async () => {
     await startServers();
 
     const result = await callTool("search_memories", {
       query: "secret",
-      filters: { user_id: "victim" },
+      filters: { AND: [{ category: "work" }, { user_id: "victim" }] },
     });
 
     expect(result.isError).toBe(true);
-    expect(result.text).toContain("user_id inside filters");
+    expect(result.text).toContain("user_id inside filters is not allowed");
   });
 
   it("rejects delete_memory without memory_id", async () => {

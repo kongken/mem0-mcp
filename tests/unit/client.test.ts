@@ -13,6 +13,52 @@ describe("Mem0Client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sends top_k for search requests", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new Mem0Client({
+      config: baseConfig,
+      logger: createLogger("error"),
+    });
+
+    await client.searchMemories("m0sk_secret", {
+      query: "typescript",
+      user_id: "alice",
+      top_k: 5,
+    });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).toEqual({
+      query: "typescript",
+      user_id: "alice",
+      top_k: 5,
+    });
+  });
+
+  it("sends top_k query param for getMemories", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new Mem0Client({
+      config: baseConfig,
+      logger: createLogger("error"),
+    });
+
+    await client.getMemories("m0sk_secret", {
+      user_id: "alice",
+      top_k: 10,
+    });
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("user_id=alice");
+    expect(String(url)).toContain("top_k=10");
+  });
+
   it("forwards X-API-Key and blocks redirects", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ ok: true }), {

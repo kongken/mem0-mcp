@@ -61,6 +61,7 @@ docker pull ghcr.io/kongken/mem0-mcp:main
 | `MCP_HTTP_PATH` | no | `/mcp` | MCP HTTP path |
 | `MEM0_REQUEST_TIMEOUT_MS` | no | `30000` | Upstream request timeout |
 | `MCP_STATELESS` | no | `false` | Use stateless Streamable HTTP mode |
+| `MCP_ALLOWED_HOSTS` | no | — | Comma-separated allowed Host headers when binding publicly (recommended with `HOST=0.0.0.0`) |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error` |
 
 **Do not** configure client API keys in server environment variables. Clients must send `X-API-Key` on every MCP HTTP request.
@@ -113,7 +114,9 @@ Export `MEM0_API_KEY` in the shell that launches Codex.
 ## Security boundaries
 
 - Missing `X-API-Key` → `401` before any Mem0 call
-- `user_id` / `agent_id` / `run_id` cannot be set via tool arguments; the adapter injects `MEM0_DEFAULT_USER_ID`
+- `user_id` / `agent_id` / `run_id` cannot be set via tool arguments or inside `search_memories.filters`; the adapter injects `MEM0_DEFAULT_USER_ID`
+- `search_memories` uses Mem0 `top_k`; `get_memories` supports `top_k` only (no pagination)
+- `list_entities` returns only the configured user entity, not the full instance catalog
 - No `delete_all_memories`, entity cascade delete, configure, or reset tools in v1
 - `delete_memory` requires an explicit `memory_id` and returns a deletion summary
 - API keys, auth headers, and memory bodies are redacted from default logs and error responses
@@ -126,7 +129,8 @@ Export `MEM0_API_KEY` in the shell that launches Codex.
 3. **Mem0 OSS** — keep auth enabled; prefer per-user `m0sk_...` keys over legacy admin keys.
 4. **Key rotation** — rotate Mem0 API keys in the dashboard; update client MCP headers; no server restart required.
 5. **Limits** — configure proxy request size limits, timeouts, and rate limits in front of both this adapter and Mem0 OSS.
-6. **Identity** — one adapter instance should map to one `MEM0_DEFAULT_USER_ID`. For multi-tenant setups, run separate instances or add explicit allowlists (future work).
+6. **Host allowlist** — when binding to `0.0.0.0`, set `MCP_ALLOWED_HOSTS` to the hostnames clients use (for example `mem0-mcp.example.com,localhost`).
+7. **Identity** — one adapter instance should map to one `MEM0_DEFAULT_USER_ID`. For multi-tenant setups, run separate instances or add explicit allowlists (future work).
 
 Example nginx snippet:
 

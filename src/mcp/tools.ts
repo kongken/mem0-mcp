@@ -3,6 +3,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig } from "../config.js";
 import { getRequestApiKey } from "../context.js";
 import { jsonResponse, toToolError } from "../errors.js";
+import {
+  filterEntitiesForUser,
+  rejectIdentityOverride,
+  sanitizeSearchFilters,
+  scopedUserId,
+} from "../identity.js";
 import type { Mem0Client } from "../mem0/client.js";
 
 const messageSchema = z.object({
@@ -12,22 +18,43 @@ const messageSchema = z.object({
 
 const metadataSchema = z.record(z.unknown()).optional();
 
-function rejectIdentityOverride(args: Record<string, unknown>): void {
-  for (const key of ["user_id", "agent_id", "run_id"]) {
-    if (key in args && args[key] !== undefined) {
-      throw new Error(
-        `${key} is managed by the MCP adapter and cannot be set in tool arguments`,
-      );
+const MAX_TOP_K = 1000;
+
+type ToolHandler<TArgs extends Record<string, unknown>> = (
+  apiKey: string,
+  args: TArgs,
+  scope: { user_id: string },
+) => Promise<unknown>;
+
+function withScopedTool<TArgs extends Record<string, unknown>>(
+  config: AppConfig,
+  handler: ToolHandler<TArgs>,
+) {
+  return async (args: TArgs) => {
+    try {
+      const apiKey = getRequestApiKey();
+      rejectIdentityOverride(args);
+      const result = await handler(apiKey, args, scopedUserId(config));
+      return jsonResponse(result);
+    } catch (error) {
+      return toToolError(error);
     }
-  }
+  };
 }
 
-function withScopedUserId(
-  config: AppConfig,
-  args: Record<string, unknown>,
-): { user_id: string } {
-  rejectIdentityOverride(args);
-  return { user_id: config.defaultUserId };
+function withAuthenticatedTool<TArgs extends Record<string, unknown>>(
+  handler: (apiKey: string, args: TArgs) => Promise<unknown>,
+) {
+  return async (args: TArgs) => {
+    try {
+      const apiKey = getRequestApiKey();
+      rejectIdentityOverride(args);
+      const result = await handler(apiKey, args);
+      return jsonResponse(result);
+    } catch (error) {
+      return toToolError(error);
+    }
+  };
 }
 
 export function registerMem0Tools(
@@ -53,21 +80,14 @@ export function registerMem0Tools(
           .describe("Whether Mem0 should infer facts from messages."),
       },
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        const scope = withScopedUserId(config, args);
-        const result = await client.addMemory(apiKey, {
-          messages: args.messages,
-          metadata: args.metadata,
-          infer: args.infer,
-          ...scope,
-        });
-        return jsonResponse(result);
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withScopedTool(config, async (apiKey, args, scope) =>
+      client.addMemory(apiKey, {
+        messages: args.messages,
+        metadata: args.metadata,
+        infer: args.infer,
+        ...scope,
+      }),
+    ),
   );
 
   server.registerTool(
@@ -77,57 +97,50 @@ export function registerMem0Tools(
       description: "Semantic search across memories for the configured user.",
       inputSchema: {
         query: z.string().min(1).describe("Natural language search query."),
-        limit: z
+        top_k: z
           .number()
           .int()
           .positive()
           .max(100)
           .optional()
-          .describe("Maximum number of results."),
-        filters: metadataSchema.describe("Optional Mem0 search filters."),
+          .describe("Maximum number of results (maps to Mem0 top_k)."),
+        filters: metadataSchema.describe(
+          "Optional Mem0 search filters. Identity keys are not allowed.",
+        ),
       },
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        const scope = withScopedUserId(config, args);
-        const result = await client.searchMemories(apiKey, {
-          query: args.query,
-          limit: args.limit,
-          filters: args.filters,
-          ...scope,
-        });
-        return jsonResponse(result);
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withScopedTool(config, async (apiKey, args, scope) =>
+      client.searchMemories(apiKey, {
+        query: args.query,
+        top_k: args.top_k,
+        filters: sanitizeSearchFilters(args.filters),
+        ...scope,
+      }),
+    ),
   );
 
   server.registerTool(
     "get_memories",
     {
       title: "Get memories",
-      description: "List memories for the configured user with optional pagination.",
+      description:
+        "List memories for the configured user. Mem0 OSS supports top_k only (no pagination).",
       inputSchema: {
-        page: z.number().int().positive().optional(),
-        page_size: z.number().int().positive().max(100).optional(),
+        top_k: z
+          .number()
+          .int()
+          .positive()
+          .max(MAX_TOP_K)
+          .optional()
+          .describe("Maximum number of memories to return."),
       },
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        const scope = withScopedUserId(config, args);
-        const result = await client.getMemories(apiKey, {
-          page: args.page,
-          page_size: args.page_size,
-          ...scope,
-        });
-        return jsonResponse(result);
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withScopedTool(config, async (apiKey, args, scope) =>
+      client.getMemories(apiKey, {
+        top_k: args.top_k,
+        ...scope,
+      }),
+    ),
   );
 
   server.registerTool(
@@ -139,16 +152,9 @@ export function registerMem0Tools(
         memory_id: z.string().min(1).describe("Memory identifier."),
       },
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        rejectIdentityOverride(args);
-        const result = await client.getMemory(apiKey, args.memory_id);
-        return jsonResponse(result);
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withAuthenticatedTool(async (apiKey, args) =>
+      client.getMemory(apiKey, args.memory_id),
+    ),
   );
 
   server.registerTool(
@@ -162,19 +168,12 @@ export function registerMem0Tools(
         metadata: metadataSchema.describe("Updated metadata."),
       },
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        rejectIdentityOverride(args);
-        const result = await client.updateMemory(apiKey, args.memory_id, {
-          text: args.text,
-          metadata: args.metadata,
-        });
-        return jsonResponse(result);
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withAuthenticatedTool(async (apiKey, args) =>
+      client.updateMemory(apiKey, args.memory_id, {
+        text: args.text,
+        metadata: args.metadata,
+      }),
+    ),
   );
 
   server.registerTool(
@@ -190,20 +189,14 @@ export function registerMem0Tools(
           .describe("Required memory identifier to delete."),
       },
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        rejectIdentityOverride(args);
-        await client.deleteMemory(apiKey, args.memory_id);
-        return jsonResponse({
-          deleted: true,
-          memory_id: args.memory_id,
-          summary: `Deleted memory ${args.memory_id}`,
-        });
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withAuthenticatedTool(async (apiKey, args) => {
+      await client.deleteMemory(apiKey, args.memory_id);
+      return {
+        deleted: true,
+        memory_id: args.memory_id,
+        summary: `Deleted memory ${args.memory_id}`,
+      };
+    }),
   );
 
   server.registerTool(
@@ -211,18 +204,12 @@ export function registerMem0Tools(
     {
       title: "List entities",
       description:
-        "List distinct user/agent/run entities known to Mem0 with memory counts.",
+        "List the configured user entity known to Mem0 with memory counts.",
       inputSchema: {},
     },
-    async (args) => {
-      try {
-        const apiKey = getRequestApiKey();
-        rejectIdentityOverride(args);
-        const result = await client.listEntities(apiKey);
-        return jsonResponse(result);
-      } catch (error) {
-        return toToolError(error);
-      }
-    },
+    withAuthenticatedTool(async (apiKey) => {
+      const entities = await client.listEntities(apiKey);
+      return filterEntitiesForUser(entities, config.defaultUserId);
+    }),
   );
 }

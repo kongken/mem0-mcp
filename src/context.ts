@@ -19,7 +19,7 @@ export const API_KEY_HEADER = "x-api-key";
 export function readApiKeyFromHeaders(
   headers: Record<string, string | string[] | undefined>,
 ): string | undefined {
-  const raw = headers[API_KEY_HEADER] ?? headers["X-API-Key"];
+  const raw = headers[API_KEY_HEADER];
   if (Array.isArray(raw)) {
     return raw[0]?.trim() || undefined;
   }

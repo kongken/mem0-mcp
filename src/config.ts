@@ -9,6 +9,7 @@ export interface AppConfig {
   requestTimeoutMs: number;
   stateless: boolean;
   logLevel: LogLevel;
+  allowedHosts?: string[];
 }
 
 const DEFAULT_PORT = 8080;
@@ -74,6 +75,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error("MCP_HTTP_PATH must start with /");
   }
 
+  const allowedHosts = env.MCP_ALLOWED_HOSTS?.split(",")
+    .map((host) => host.trim())
+    .filter(Boolean);
+
   return {
     host: env.HOST?.trim() || "0.0.0.0",
     port,
@@ -83,13 +88,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     requestTimeoutMs,
     stateless: parseBoolean(env.MCP_STATELESS, false),
     logLevel: parseLogLevel(env.LOG_LEVEL),
+    allowedHosts: allowedHosts?.length ? allowedHosts : undefined,
   };
-}
-
-export function assertSameOrigin(requestUrl: URL, configuredOrigin: URL): void {
-  if (requestUrl.origin !== configuredOrigin.origin) {
-    throw new Error(
-      `Refusing to follow request to unexpected origin: ${requestUrl.origin}`,
-    );
-  }
 }

@@ -21,17 +21,6 @@ function redact(value: string): string {
   return result;
 }
 
-function serialize(value: unknown): string {
-  if (typeof value === "string") {
-    return redact(value);
-  }
-  try {
-    return redact(JSON.stringify(value));
-  } catch {
-    return "[unserializable]";
-  }
-}
-
 export interface Logger {
   debug(message: string, fields?: Record<string, unknown>): void;
   info(message: string, fields?: Record<string, unknown>): void;
@@ -54,7 +43,7 @@ export function createLogger(level: LogLevel): Logger {
     const payload = {
       ts: new Date().toISOString(),
       level: logLevel,
-      msg: message,
+      msg: redact(message),
       ...(fields ? { fields: sanitizeFields(fields) } : {}),
     };
 

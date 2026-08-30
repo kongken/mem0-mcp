@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig, assertSameOrigin } from "../../src/config.js";
+import { loadConfig } from "../../src/config.js";
 
 describe("loadConfig", () => {
   it("loads required settings", () => {
@@ -10,6 +10,7 @@ describe("loadConfig", () => {
       MCP_HTTP_PATH: "/mcp",
       MCP_STATELESS: "true",
       LOG_LEVEL: "debug",
+      MCP_ALLOWED_HOSTS: "localhost,mem0.example",
     });
 
     expect(config.port).toBe(9090);
@@ -18,6 +19,7 @@ describe("loadConfig", () => {
     expect(config.mem0ApiUrl.origin).toBe("http://mem0:8888");
     expect(config.stateless).toBe(true);
     expect(config.logLevel).toBe("debug");
+    expect(config.allowedHosts).toEqual(["localhost", "mem0.example"]);
   });
 
   it("throws when required env vars are missing", () => {
@@ -25,21 +27,5 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ MEM0_API_URL: "http://localhost:8888" }),
     ).toThrow("MEM0_DEFAULT_USER_ID is required");
-  });
-});
-
-describe("assertSameOrigin", () => {
-  it("allows requests to configured origin", () => {
-    const base = new URL("http://mem0:8888");
-    expect(() =>
-      assertSameOrigin(new URL("http://mem0:8888/memories", base), base),
-    ).not.toThrow();
-  });
-
-  it("rejects other origins", () => {
-    const base = new URL("http://mem0:8888");
-    expect(() =>
-      assertSameOrigin(new URL("http://evil.example/memories"), base),
-    ).toThrow("unexpected origin");
   });
 });

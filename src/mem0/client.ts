@@ -1,4 +1,4 @@
-import { assertSameOrigin, type AppConfig } from "../config.js";
+import { type AppConfig } from "../config.js";
 import { UpstreamError, mapUpstreamStatus } from "../errors.js";
 import type { Logger } from "../logger.js";
 
@@ -29,8 +29,6 @@ export class Mem0Client {
       messages: Mem0Message[];
       user_id: string;
       metadata?: Record<string, unknown>;
-      agent_id?: string;
-      run_id?: string;
       infer?: boolean;
     },
   ): Promise<unknown> {
@@ -42,28 +40,36 @@ export class Mem0Client {
     body: {
       query: string;
       user_id: string;
-      limit?: number;
+      top_k?: number;
       filters?: Record<string, unknown>;
     },
   ): Promise<unknown> {
-    return this.request(apiKey, "POST", "/search", body);
+    const payload: Record<string, unknown> = {
+      query: body.query,
+      user_id: body.user_id,
+    };
+
+    if (body.top_k !== undefined) {
+      payload.top_k = body.top_k;
+    }
+    if (body.filters !== undefined) {
+      payload.filters = body.filters;
+    }
+
+    return this.request(apiKey, "POST", "/search", payload);
   }
 
   async getMemories(
     apiKey: string,
     query: {
       user_id: string;
-      page?: number;
-      page_size?: number;
+      top_k?: number;
     },
   ): Promise<unknown> {
     const params = new URLSearchParams();
     params.set("user_id", query.user_id);
-    if (query.page !== undefined) {
-      params.set("page", String(query.page));
-    }
-    if (query.page_size !== undefined) {
-      params.set("page_size", String(query.page_size));
+    if (query.top_k !== undefined) {
+      params.set("top_k", String(query.top_k));
     }
     return this.request(apiKey, "GET", `/memories?${params.toString()}`);
   }
@@ -104,7 +110,6 @@ export class Mem0Client {
     body?: unknown,
   ): Promise<unknown> {
     const url = new URL(path, this.baseUrl);
-    assertSameOrigin(url, this.baseUrl);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);

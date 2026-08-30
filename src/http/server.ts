@@ -27,7 +27,10 @@ export function createHttpServer(
   config: AppConfig,
   logger: Logger,
 ): HttpServer {
-  const app = createMcpExpressApp({ host: config.host });
+  const app = createMcpExpressApp({
+    host: config.host,
+    ...(config.allowedHosts ? { allowedHosts: config.allowedHosts } : {}),
+  });
   const client = new Mem0Client({ config, logger });
   const transports: TransportMap = {};
 
@@ -46,11 +49,7 @@ export function createHttpServer(
 
     await requestContext.run({ apiKey }, async () => {
       try {
-        if (config.stateless) {
-          await handleStatelessRequest(req, res, client, config, logger);
-          return;
-        }
-        await handleStatefulRequest(req, res, transports, client, config, logger);
+        await handleMcpRequest(req, res, transports, client, config, logger);
       } catch (error) {
         logger.error("mcp request failed", {
           error: error instanceof Error ? error.message : "unknown",
@@ -79,6 +78,7 @@ export function createHttpServer(
             path: config.mcpPath,
             mem0Origin: config.mem0ApiUrl.origin,
             stateless: config.stateless,
+            allowedHosts: config.allowedHosts?.length ?? 0,
           });
           resolve();
         });
@@ -105,40 +105,7 @@ export function createHttpServer(
   };
 }
 
-function sendAuthError(res: Response): void {
-  res.status(401).json({
-    jsonrpc: "2.0",
-    error: {
-      code: -32001,
-      message: new AuthenticationError().message,
-    },
-    id: null,
-  });
-}
-
-async function handleStatelessRequest(
-  req: Request,
-  res: Response,
-  client: Mem0Client,
-  config: AppConfig,
-  logger: Logger,
-): Promise<void> {
-  const server = createMcpServer(client, config);
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-  });
-
-  transport.onerror = (error) => {
-    logger.error("transport error", { error: error.message });
-  };
-
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
-  await transport.close();
-  await server.close();
-}
-
-async function handleStatefulRequest(
+async function handleMcpRequest(
   req: Request,
   res: Response,
   transports: TransportMap,
@@ -146,28 +113,21 @@ async function handleStatefulRequest(
   config: AppConfig,
   logger: Logger,
 ): Promise<void> {
+  if (config.stateless) {
+    const transport = createStatelessTransport(logger);
+    const server = createMcpServer(client, config);
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+    await transport.close();
+    await server.close();
+    return;
+  }
+
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   let transport = sessionId ? transports[sessionId] : undefined;
 
   if (!transport && isInitializeRequest(req.body)) {
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (newSessionId) => {
-        transports[newSessionId] = transport!;
-      },
-    });
-
-    transport.onclose = () => {
-      const id = transport?.sessionId;
-      if (id) {
-        delete transports[id];
-      }
-    };
-
-    transport.onerror = (error) => {
-      logger.error("transport error", { error: error.message });
-    };
-
+    transport = createStatefulTransport(logger, transports);
     const server = createMcpServer(client, config);
     await server.connect(transport);
   }
@@ -185,6 +145,54 @@ async function handleStatefulRequest(
   }
 
   await transport.handleRequest(req, res, req.body);
+}
+
+function createStatelessTransport(logger: Logger): StreamableHTTPServerTransport {
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+
+  transport.onerror = (error) => {
+    logger.error("transport error", { error: error.message });
+  };
+
+  return transport;
+}
+
+function createStatefulTransport(
+  logger: Logger,
+  transports: TransportMap,
+): StreamableHTTPServerTransport {
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+    onsessioninitialized: (sessionId) => {
+      transports[sessionId] = transport;
+    },
+  });
+
+  transport.onclose = () => {
+    const sessionId = transport.sessionId;
+    if (sessionId) {
+      delete transports[sessionId];
+    }
+  };
+
+  transport.onerror = (error) => {
+    logger.error("transport error", { error: error.message });
+  };
+
+  return transport;
+}
+
+function sendAuthError(res: Response): void {
+  res.status(401).json({
+    jsonrpc: "2.0",
+    error: {
+      code: -32001,
+      message: new AuthenticationError().message,
+    },
+    id: null,
+  });
 }
 
 function createMcpServer(client: Mem0Client, config: AppConfig): McpServer {

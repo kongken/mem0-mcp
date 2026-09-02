@@ -4,6 +4,8 @@ Streamable HTTP MCP adapter for **self-hosted Mem0 OSS**. It sits in front of yo
 
 Official Mem0 MCP (`mcp.mem0.ai`) talks to Mem0 Cloud. **This project talks to the Mem0 you run yourself.**
 
+This repo also ships a **Go CLI** for the same OSS API (`mem0 add` / `search` / `list` / `update` / `delete` / … with an agent-JSON mode). See [`cli/`](./cli/README.md).
+
 ## Architecture
 
 ```
@@ -23,6 +25,7 @@ Postgres + pgvector (your data)
 | --- | --- | --- |
 | **Mem0 OSS** | Stores and searches memories | `OPENAI_API_KEY`, Postgres, admin/API keys |
 | **mem0-mcp** | MCP ↔ REST bridge | `MEM0_API_URL`, `MEM0_DEFAULT_USER_ID` |
+| **mem0 CLI** | Go CLI against the OSS API (`cli/`) | `MEM0_BASE_URL`, `MEM0_API_KEY` |
 | **MCP client** | Calls tools from the agent | MCP URL + `X-API-Key` header |
 
 **Important:** Mem0 API keys (`m0sk_...`) go in the **MCP client**, not in mem0-mcp's environment. mem0-mcp forwards the key from each HTTP request to your Mem0 instance.
